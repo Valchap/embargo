@@ -7,3 +7,4 @@ edition = "2021"
 
 [dependencies]
 toml = "0.7.3"
+walkdir = "2.3.3"
