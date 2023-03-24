@@ -2,6 +2,12 @@
 name = "embargo"
 version = "0.0.1"
 edition = "2021"
+description = "A simple and fast opinionated build system for c/c++"
+license = "GPL-3.0"
+repository = "https://github.com/Valchap/embargo"
+readme = "README.md"
+categories = ["command-line-utilities", "development-tools::build-utils"]
+keywords = ["c", "c++", "build-tool"]
 
 [dependencies]
 toml = "0.7.3"
