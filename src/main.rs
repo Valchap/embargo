@@ -1,3 +1,5 @@
+#![warn(clippy::pedantic)]
+
 use std::process::Command;
 
 use toml::{map::Map, Table, Value};
@@ -8,15 +10,23 @@ const COMPILE_FLAGS_FILE: &str = "compile_flags.txt";
 
 const COMPILER_KEY: &str = "compiler";
 const DEBUGGER_KEY: &str = "debugger";
+const LINTER_KEY: &str = "linter";
+
 const FLAGS_KEY: &str = "flags";
 const DEBUG_FLAGS_KEY: &str = "debug-flags";
 const RELEASE_FLAGS_KEY: &str = "release-flags";
 
+const LINTER_CHECKS_KEY: &str = "linter-checks";
+
 const DEFAULT_COMPILER: &str = "clang++";
 const DEFAULT_DEBUGGER: &str = "lldb";
-const DEFAULT_FLAGS: &str = "-Wall -Wextra -pedantic";
-const DEFAULT_DEBUG_FLAGS: &str = "-g";
-const DEFAULT_RELEASE_FLAGS: &str = "-O2 -s";
+const DEFAULT_LINTER: &str = "clang-tidy";
+
+const DEFAULT_FLAGS: &[&str] = &["-Wall", "-Wextra", "-pedantic"];
+const DEFAULT_DEBUG_FLAGS: &[&str] = &["-g"];
+const DEFAULT_RELEASE_FLAGS: &[&str] = &["-O2", "-s"];
+
+const DEFAULT_LINTER_CHECKS: &str = "clang-analyzer-*";
 
 const SRC_DIR: &str = "src";
 const INCLUDE_DIR: &str = "include";
@@ -45,10 +55,13 @@ const SEPARATOR: char = std::path::MAIN_SEPARATOR;
 struct Config {
     compiler: String,
     debugger: String,
+    linter: String,
 
-    flags: String,
-    debug_flags: String,
-    release_flags: String,
+    flags: Vec<String>,
+    debug_flags: Vec<String>,
+    release_flags: Vec<String>,
+
+    linter_checks: String,
 }
 
 fn read_string_key(toml: &Map<String, Value>, key_name: &str) -> Result<Option<String>, String> {
@@ -63,6 +76,41 @@ fn read_string_key(toml: &Map<String, Value>, key_name: &str) -> Result<Option<S
     }
 }
 
+fn read_string_list_key(
+    toml: &Map<String, Value>,
+    key_name: &str,
+) -> Result<Option<Vec<String>>, String> {
+    let mut values = Vec::new();
+
+    if let Some(value) = toml.get(key_name) {
+        if let Some(array) = value.as_array() {
+            for v in array {
+                if let Some(slice) = v.as_str() {
+                    values.push(slice.to_owned());
+                } else {
+                    return Err(format!("{key_name} value must be an array of string"));
+                }
+            }
+
+            Ok(Some(values))
+        } else {
+            Err(format!("{key_name} value must be an array of string"))
+        }
+    } else {
+        Ok(None)
+    }
+}
+
+fn to_owned_string_list(in_list: &[&str]) -> Vec<String> {
+    let mut out_list = Vec::new();
+
+    for &s in in_list {
+        out_list.push(s.to_string());
+    }
+
+    out_list
+}
+
 fn read_configuration(config_path: &str) -> Result<Config, String> {
     match std::fs::read_to_string(format!("{config_path}{SEPARATOR}{CONFIG_FILE}")) {
         Ok(toml_str) => match toml_str.parse::<Table>() {
@@ -71,18 +119,27 @@ fn read_configuration(config_path: &str) -> Result<Config, String> {
                     read_string_key(&toml, COMPILER_KEY)?.unwrap_or(DEFAULT_COMPILER.to_owned());
                 let debugger =
                     read_string_key(&toml, DEBUGGER_KEY)?.unwrap_or(DEFAULT_DEBUGGER.to_owned());
-                let flags = read_string_key(&toml, FLAGS_KEY)?.unwrap_or(DEFAULT_FLAGS.to_owned());
-                let debug_flags = read_string_key(&toml, DEBUG_FLAGS_KEY)?
-                    .unwrap_or(DEFAULT_DEBUG_FLAGS.to_owned());
-                let release_flags = read_string_key(&toml, RELEASE_FLAGS_KEY)?
-                    .unwrap_or(DEFAULT_RELEASE_FLAGS.to_owned());
+                let linter =
+                    read_string_key(&toml, LINTER_KEY)?.unwrap_or(DEFAULT_LINTER.to_owned());
+
+                let flags = read_string_list_key(&toml, FLAGS_KEY)?
+                    .unwrap_or(to_owned_string_list(DEFAULT_FLAGS));
+                let debug_flags = read_string_list_key(&toml, DEBUG_FLAGS_KEY)?
+                    .unwrap_or(to_owned_string_list(DEFAULT_DEBUG_FLAGS));
+                let release_flags = read_string_list_key(&toml, RELEASE_FLAGS_KEY)?
+                    .unwrap_or(to_owned_string_list(DEFAULT_RELEASE_FLAGS));
+
+                let linter_checks = read_string_key(&toml, LINTER_CHECKS_KEY)?
+                    .unwrap_or(DEFAULT_LINTER_CHECKS.to_owned());
 
                 Ok(Config {
                     compiler,
                     debugger,
+                    linter,
                     flags,
                     debug_flags,
                     release_flags,
+                    linter_checks,
                 })
             }
 
@@ -125,12 +182,12 @@ fn find_file(dir: &str, extensions: &[&str]) -> Result<Vec<String>, String> {
     Ok(files)
 }
 
-fn find_headers() -> Result<Vec<String>, String> {
-    find_file(INCLUDE_DIR, &[".hpp", ".h"])
-}
-
 fn find_srcs() -> Result<Vec<String>, String> {
     find_file(SRC_DIR, &[".cpp", ".c"])
+}
+
+fn find_code() -> Result<Vec<String>, String> {
+    find_file(SRC_DIR, &[".hpp", ".h", ".cpp", ".c"])
 }
 
 fn build(compiler: &str, flags: &[&str], build_subdir: &str) {
@@ -180,18 +237,56 @@ fn build(compiler: &str, flags: &[&str], build_subdir: &str) {
     }
 }
 
+fn lint(linter: &str, checks: &str, compile_flags: &[&str]) {
+    let code_files = match find_code() {
+        Ok(files) => files,
+        Err(error) => {
+            eprintln!("{error}");
+            return;
+        }
+    };
+
+    let mut lint_command = Command::new(linter);
+
+    lint_command.args(code_files);
+    lint_command.arg(format!("-checks={checks}"));
+    lint_command.arg("--");
+    lint_command.args(compile_flags);
+
+    let lint_result = lint_command.status();
+
+    match lint_result {
+        Ok(exit_status) => {
+            if exit_status.success() {
+                println!("Linting successfull");
+            } else {
+                println!("Linter error !");
+            }
+        }
+
+        Err(error) => {
+            eprintln!("Linter error : {error}");
+        }
+    }
+}
+
 fn build_command() {
     match read_configuration(".") {
         Ok(config) => {
-            build(
-                &config.compiler,
-                &[
-                    &config.flags,
-                    &config.debug_flags,
-                    &format!("-I{INCLUDE_DIR}"),
-                ],
-                DEBUG_BUILD_SUBDIR,
-            );
+            let mut flags = Vec::<&str>::new();
+
+            for f in &config.flags {
+                flags.push(f);
+            }
+
+            for f in &config.debug_flags {
+                flags.push(f);
+            }
+
+            let f = format!("-I{INCLUDE_DIR}");
+            flags.push(&f);
+
+            build(&config.compiler, &flags, DEBUG_BUILD_SUBDIR);
         }
         Err(err_msg) => {
             eprintln!("{err_msg}");
@@ -202,15 +297,20 @@ fn build_command() {
 fn release_build_command() {
     match read_configuration(".") {
         Ok(config) => {
-            build(
-                &config.compiler,
-                &[
-                    &config.flags,
-                    &config.release_flags,
-                    &format!("-I{INCLUDE_DIR}"),
-                ],
-                RELEASE_BUILD_SUBDIR,
-            );
+            let mut flags = Vec::<&str>::new();
+
+            for f in &config.flags {
+                flags.push(f);
+            }
+
+            for f in &config.debug_flags {
+                flags.push(f);
+            }
+
+            let f = format!("-I{INCLUDE_DIR}");
+            flags.push(&f);
+
+            build(&config.compiler, &flags, RELEASE_BUILD_SUBDIR);
         }
         Err(err_msg) => {
             eprintln!("{err_msg}");
@@ -275,6 +375,26 @@ fn debug_command() {
     }
 }
 
+fn lint_command() {
+    match read_configuration(".") {
+        Ok(config) => {
+            let mut flags = Vec::<&str>::new();
+
+            for f in &config.flags {
+                flags.push(f);
+            }
+
+            let f = format!("-I{INCLUDE_DIR}");
+            flags.push(&f);
+
+            lint(&config.linter, &config.linter_checks, &flags);
+        }
+        Err(err_msg) => {
+            eprintln!("{err_msg}");
+        }
+    }
+}
+
 fn init_command() {
     if std::path::Path::new(CONFIG_FILE).is_file() {
         eprintln!("Can't init an already existing embargo project");
@@ -318,9 +438,10 @@ fn config_command() {
             println!("Embargo is configured as follow: ");
             println!("    Compiler          {}", config.compiler);
             println!("    Debugger          {}", config.debugger);
-            println!("    Flags             {}", config.flags);
-            println!("    Debug flags       {}", config.debug_flags);
-            println!("    Release flags     {}", config.release_flags);
+            println!("    Linter            {}", config.linter);
+            println!("    Flags             {:?}", config.flags);
+            println!("    Debug flags       {:?}", config.debug_flags);
+            println!("    Release flags     {:?}", config.release_flags);
         }
         Err(err_msg) => {
             eprintln!("{err_msg}");
@@ -336,7 +457,7 @@ fn clangd_config_command() {
             compile_flags.push_str("-Iinclude\n");
             compile_flags.push_str("-Isrc\n");
 
-            for flag in config.flags.split_whitespace() {
+            for flag in &config.flags {
                 compile_flags.push_str(flag);
                 compile_flags.push('\n');
             }
@@ -367,6 +488,7 @@ fn help_command() {
     println!("    run              Build the app in debug mode and run it");
     println!("    release-run      Build the app in release mode and run it");
     println!("    debug            Build the app in debug mode and open it with the debugger");
+    println!("    lint             Run the linter on your project to find common mistakes");
     println!("    init             Create default files to start working on your project");
     println!("    config           Show embargo configuration as defined in Embargo.toml file");
     println!("    clangd-config    Generate compile_flags.txt based on your configuration for clangd settings");
@@ -377,39 +499,18 @@ fn help_command() {
 fn main() {
     if let Some(first_arg) = std::env::args().nth(1) {
         match first_arg.as_str() {
-            "build" => {
-                build_command();
-            }
-            "release-build" => {
-                release_build_command();
-            }
-            "run" => {
-                run_command();
-            }
-            "release-run" => {
-                release_run_command();
-            }
-            "debug" => {
-                debug_command();
-            }
-            "init" => {
-                init_command();
-            }
-            "config" => {
-                config_command();
-            }
-            "clangd-config" => {
-                clangd_config_command();
-            }
-            "clean" => {
-                clean_command();
-            }
-            "help" => {
-                help_command();
-            }
-            _ => {
-                eprintln!("Unknown command, try `embargo help` for more informations");
-            }
+            "build" => build_command(),
+            "release-build" => release_build_command(),
+            "run" => run_command(),
+            "release-run" => release_run_command(),
+            "debug" => debug_command(),
+            "lint" => lint_command(),
+            "init" => init_command(),
+            "config" => config_command(),
+            "clangd-config" => clangd_config_command(),
+            "clean" => clean_command(),
+            "help" => help_command(),
+            _ => eprintln!("Unknown command, try `embargo help` for more informations"),
         }
     } else {
         eprintln!("Embargo takes a command as parameter, try `embargo help` for more informations");
