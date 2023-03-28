@@ -12,8 +12,8 @@ const FLAGS_KEY: &str = "flags";
 const DEBUG_FLAGS_KEY: &str = "debug-flags";
 const RELEASE_FLAGS_KEY: &str = "release-flags";
 
-const DEFAULT_COMPILER: &str = "g++";
-const DEFAULT_DEBUGGER: &str = "gdb";
+const DEFAULT_COMPILER: &str = "clang++";
+const DEFAULT_DEBUGGER: &str = "lldb";
 const DEFAULT_FLAGS: &str = "-Wall -Wextra -pedantic";
 const DEFAULT_DEBUG_FLAGS: &str = "-g";
 const DEFAULT_RELEASE_FLAGS: &str = "-O2 -s";
@@ -21,6 +21,16 @@ const DEFAULT_RELEASE_FLAGS: &str = "-O2 -s";
 const SRC_DIR: &str = "src";
 const INCLUDE_DIR: &str = "include";
 const BUILD_DIR: &str = "build";
+
+const DEBUG_BUILD_SUBDIR: &str = "debug";
+const RELEASE_BUILD_SUBDIR: &str = "release";
+
+#[cfg(target_os = "linux")]
+static EXE_EXTENSION: &str = "";
+#[cfg(target_os = "macos")]
+static EXE_EXTENSION: &str = "";
+#[cfg(target_os = "windows")]
+static EXE_EXTENSION: &str = ".exe";
 
 const HELLO_WORLD: &str = r#"#include <iostream>
 
@@ -150,7 +160,7 @@ fn build(compiler: &str, flags: &[&str], build_subdir: &str) {
     let mut compile_command = Command::new(compiler);
 
     compile_command.args(flags);
-    compile_command.arg(format!("-o{subdir}{SEPARATOR}app"));
+    compile_command.arg(format!("-o{subdir}{SEPARATOR}app{EXE_EXTENSION}"));
     compile_command.args(source_files);
 
     let compile_result = compile_command.status();
@@ -166,6 +176,101 @@ fn build(compiler: &str, flags: &[&str], build_subdir: &str) {
 
         Err(error) => {
             eprintln!("Compiler error : {error}");
+        }
+    }
+}
+
+fn build_command() {
+    match read_configuration(".") {
+        Ok(config) => {
+            build(
+                &config.compiler,
+                &[
+                    &config.flags,
+                    &config.debug_flags,
+                    &format!("-I{INCLUDE_DIR}"),
+                ],
+                DEBUG_BUILD_SUBDIR,
+            );
+        }
+        Err(err_msg) => {
+            eprintln!("{err_msg}");
+        }
+    }
+}
+
+fn release_build_command() {
+    match read_configuration(".") {
+        Ok(config) => {
+            build(
+                &config.compiler,
+                &[
+                    &config.flags,
+                    &config.release_flags,
+                    &format!("-I{INCLUDE_DIR}"),
+                ],
+                RELEASE_BUILD_SUBDIR,
+            );
+        }
+        Err(err_msg) => {
+            eprintln!("{err_msg}");
+        }
+    }
+}
+
+fn run_command() {
+    build_command();
+
+    match read_configuration(".") {
+        Ok(config) => {
+            let mut run_command = Command::new(config.debugger);
+            run_command.arg("--source-quietly");
+            run_command.arg("-o");
+            run_command.arg("run");
+            run_command.arg("-o");
+            run_command.arg("exit");
+            run_command.arg(format!(
+                "{BUILD_DIR}{SEPARATOR}{DEBUG_BUILD_SUBDIR}{SEPARATOR}app{EXE_EXTENSION}"
+            ));
+
+            if let Err(error) = run_command.status() {
+                println!("Can't run your app : {error}");
+            }
+        }
+        Err(err_msg) => {
+            eprintln!("{err_msg}");
+        }
+    }
+}
+
+fn release_run_command() {
+    release_build_command();
+
+    let mut run_command = Command::new(format!(
+        "{BUILD_DIR}{SEPARATOR}{RELEASE_BUILD_SUBDIR}{SEPARATOR}app{EXE_EXTENSION}"
+    ));
+
+    if let Err(error) = run_command.status() {
+        println!("Can't run your app : {error}");
+    }
+}
+
+fn debug_command() {
+    build_command();
+
+    match read_configuration(".") {
+        Ok(config) => {
+            let mut run_command = Command::new(config.debugger);
+            run_command.arg(format!(
+                "{BUILD_DIR}{SEPARATOR}{DEBUG_BUILD_SUBDIR}{SEPARATOR}app{EXE_EXTENSION}"
+            ));
+
+            if let Err(error) = run_command.status() {
+                println!("Can't run your app : {error}");
+            }
+        }
+        Err(err_msg) => {
+            eprintln!("{err_msg}");
         }
     }
 }
@@ -273,7 +378,19 @@ fn main() {
     if let Some(first_arg) = std::env::args().nth(1) {
         match first_arg.as_str() {
             "build" => {
-                build("g++", "-Iinclude", "debug");
+                build_command();
+            }
+            "release-build" => {
+                release_build_command();
+            }
+            "run" => {
+                run_command();
+            }
+            "release-run" => {
+                release_run_command();
+            }
+            "debug" => {
+                debug_command();
             }
             "init" => {
                 init_command();
