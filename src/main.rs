@@ -86,10 +86,10 @@ fn read_configuration(config_path: &str) -> Result<Config, String> {
     }
 }
 
-fn build(compiler: &str, flags: &str, build_subdir: &str) {
-    let walker = WalkDir::new(SRC_DIR);
+fn find_file(dir: &str, extensions: &[&str]) -> Result<Vec<String>, String> {
+    let mut files = Vec::new();
 
-    let mut source_files = String::new();
+    let walker = WalkDir::new(dir);
 
     for entry in walker {
         match entry {
@@ -97,19 +97,40 @@ fn build(compiler: &str, flags: &str, build_subdir: &str) {
                 if file.file_type().is_file() {
                     let file_name = file.file_name().to_string_lossy();
 
-                    if file_name.ends_with(".c") || file_name.ends_with(".cpp") {
-                        source_files.push_str(&file.path().to_string_lossy());
-                        source_files.push(' ');
+                    for ext in extensions {
+                        if file_name.ends_with(ext) {
+                            files.push((*file.path().to_string_lossy()).to_owned());
+                            break;
+                        }
                     }
                 }
             }
 
             Err(error) => {
-                eprintln!("Error can't read entry : {error}");
-                return;
+                return Err(format!("Error can't read entry : {error}"));
             }
         }
     }
+
+    Ok(files)
+}
+
+fn find_headers() -> Result<Vec<String>, String> {
+    find_file(INCLUDE_DIR, &[".hpp", ".h"])
+}
+
+fn find_srcs() -> Result<Vec<String>, String> {
+    find_file(SRC_DIR, &[".cpp", ".c"])
+}
+
+fn build(compiler: &str, flags: &[&str], build_subdir: &str) {
+    let source_files = match find_srcs() {
+        Ok(srcs) => srcs,
+        Err(error) => {
+            eprintln!("{error}");
+            return;
+        }
+    };
 
     if !std::path::Path::new(BUILD_DIR).is_dir() {
         if let Err(error) = std::fs::create_dir(BUILD_DIR) {
@@ -128,9 +149,9 @@ fn build(compiler: &str, flags: &str, build_subdir: &str) {
 
     let mut compile_command = Command::new(compiler);
 
-    compile_command.args(flags.split_whitespace());
+    compile_command.args(flags);
     compile_command.arg(format!("-o{subdir}{SEPARATOR}app"));
-    compile_command.args(source_files.split_whitespace());
+    compile_command.args(source_files);
 
     let compile_result = compile_command.status();
 
