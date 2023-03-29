@@ -1,5 +1,7 @@
 #![warn(clippy::pedantic)]
 
+mod parallel_runner;
+
 use std::process::Command;
 
 use toml::{map::Map, Table, Value};
