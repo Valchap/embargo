@@ -93,6 +93,7 @@ linter = "clang-tidy"
 flags = ["-Wall", "-Wextra", "-pedantic"]
 debug-flags = ["-g"]
 release-flags = ["-O2"]
+linker-flags = []
 linter-checks = ["clang-analyzer-*"]
 ```
 
