@@ -2,7 +2,12 @@
 
 mod parallel_runner;
 
-use std::{fs::create_dir_all, path::Path, process::Command};
+use std::{
+    fs::create_dir_all,
+    io::{self, Write},
+    path::Path,
+    process::Command,
+};
 
 use parallel_runner::parallel_run;
 use toml::{map::Map, Table, Value};
@@ -18,6 +23,7 @@ const LINTER_KEY: &str = "linter";
 const FLAGS_KEY: &str = "flags";
 const DEBUG_FLAGS_KEY: &str = "debug-flags";
 const RELEASE_FLAGS_KEY: &str = "release-flags";
+const LINKER_FLAGS_KEY: &str = "linker-flags";
 
 const LINTER_CHECKS_KEY: &str = "linter-checks";
 
@@ -27,7 +33,8 @@ const DEFAULT_LINTER: &str = "clang-tidy";
 
 const DEFAULT_FLAGS: &[&str] = &["-Wall", "-Wextra", "-pedantic"];
 const DEFAULT_DEBUG_FLAGS: &[&str] = &["-g"];
-const DEFAULT_RELEASE_FLAGS: &[&str] = &["-O2", "-s"];
+const DEFAULT_RELEASE_FLAGS: &[&str] = &["-O2"];
+const DEFAULT_LINKER_FLAGS: &[&str] = &[];
 
 const DEFAULT_LINTER_CHECKS: &str = "clang-analyzer-*";
 
@@ -63,6 +70,7 @@ struct Config {
     flags: Vec<String>,
     debug_flags: Vec<String>,
     release_flags: Vec<String>,
+    linker_flags: Vec<String>,
 
     linter_checks: String,
 }
@@ -122,6 +130,7 @@ fn default_configuration() -> Config {
         flags: to_owned_string_vec(DEFAULT_FLAGS),
         debug_flags: to_owned_string_vec(DEFAULT_DEBUG_FLAGS),
         release_flags: to_owned_string_vec(DEFAULT_RELEASE_FLAGS),
+        linker_flags: to_owned_string_vec(DEFAULT_LINKER_FLAGS),
         linter_checks: DEFAULT_LINTER_CHECKS.to_owned(),
     }
 }
@@ -144,6 +153,9 @@ fn read_configuration(config_path: &str) -> Result<Config, String> {
                 let release_flags = read_string_list_key(&toml, RELEASE_FLAGS_KEY)?
                     .unwrap_or(to_owned_string_vec(DEFAULT_RELEASE_FLAGS));
 
+                let linker_flags = read_string_list_key(&toml, LINKER_FLAGS_KEY)?
+                    .unwrap_or(to_owned_string_vec(DEFAULT_LINKER_FLAGS));
+
                 let linter_checks = read_string_key(&toml, LINTER_CHECKS_KEY)?
                     .unwrap_or(DEFAULT_LINTER_CHECKS.to_owned());
 
@@ -154,6 +166,7 @@ fn read_configuration(config_path: &str) -> Result<Config, String> {
                     flags,
                     debug_flags,
                     release_flags,
+                    linker_flags,
                     linter_checks,
                 })
             }
@@ -219,6 +232,7 @@ fn compile_object(options: (String, Vec<String>, String, String)) -> Result<bool
 
     compile_command.args(flags);
     compile_command.arg("-c");
+    compile_command.arg("-fcolor-diagnostics");
     compile_command.arg(format!("-o{output}"));
     compile_command.arg(input);
 
@@ -229,18 +243,33 @@ fn compile_object(options: (String, Vec<String>, String, String)) -> Result<bool
         }
     }
 
-    let compile_result = compile_command.status();
+    let compile_result = compile_command.output();
 
     match compile_result {
         Ok(compile_output) => {
-            if compile_output.success() {
+            {
+                let mut out = io::stdout().lock();
+
+                if let Err(error) = out.write_all(&compile_output.stdout) {
+                    return Err(format!("Can't write to stdout : {error}"));
+                }
+            }
+            {
+                let mut out = io::stderr().lock();
+
+                if let Err(error) = out.write_all(&compile_output.stderr) {
+                    return Err(format!("Can't write to stderr : {error}"));
+                }
+            }
+
+            if compile_output.status.success() {
                 Ok(true)
             } else {
                 Ok(false)
             }
         }
 
-        Err(error) => Err(format!("Can't run compiler : {error}")),
+        Err(error) => Err(format!("Can't start compiler : {error}")),
     }
 }
 
@@ -315,7 +344,7 @@ fn link_program(compiler: &str, flags: &[&str], build_subdir: &str) -> Result<bo
             }
         }
 
-        Err(error) => Err(format!("Compiler error : {error}")),
+        Err(error) => Err(format!("Can't start compiler : {error}")),
     }
 }
 
@@ -346,6 +375,10 @@ fn build(config: &Config, release: bool) -> Result<bool, String> {
     };
 
     if compile_all_objects(&config.compiler, &flags, build_subdir)? {
+        for f in &config.linker_flags {
+            flags.push(f);
+        }
+
         link_program(&config.compiler, &flags, build_subdir)
     } else {
         Ok(false)
@@ -373,14 +406,14 @@ fn lint(linter: &str, checks: &str, compile_flags: &[&str]) {
     match lint_result {
         Ok(exit_status) => {
             if exit_status.success() {
-                println!("Linting successfull");
+                println!("Finished");
             } else {
-                println!("Linter error !");
+                println!("Finished, with errors");
             }
         }
 
         Err(error) => {
-            eprintln!("Linter error : {error}");
+            eprintln!("Can't run linter : {error}");
         }
     }
 }
@@ -389,13 +422,13 @@ fn build_command(config: &Config) {
     match build(config, false) {
         Ok(successful) => {
             if successful {
-                println!("Build successful");
+                println!("Finished");
             } else {
-                println!("Build failed");
+                println!("Finished, with errors");
             }
         }
         Err(err_msg) => {
-            eprintln!("Internal error : {err_msg}");
+            eprintln!("Build error : {err_msg}");
         }
     }
 }
@@ -404,57 +437,84 @@ fn release_build_command(config: &Config) {
     match build(config, true) {
         Ok(successful) => {
             if successful {
-                println!("Build successful");
+                println!("Finished");
             } else {
-                println!("Build failed");
+                println!("Finished, with errors");
             }
         }
         Err(err_msg) => {
-            eprintln!("Internal error : {err_msg}");
+            eprintln!("Build error : {err_msg}");
         }
     }
 }
 
 fn run_command(config: &Config) {
-    build_command(config);
+    match build(config, false) {
+        Ok(successful) => {
+            if successful {
+                let mut run_command = Command::new(&config.debugger);
+                run_command.arg("--source-quietly");
+                run_command.arg("-o");
+                run_command.arg("run");
+                run_command.arg("-o");
+                run_command.arg("exit");
+                run_command.arg(format!(
+                    "{BUILD_DIR}{SEPARATOR}{DEBUG_BUILD_SUBDIR}{SEPARATOR}app{EXE_EXTENSION}"
+                ));
 
-    let mut run_command = Command::new(&config.debugger);
-    run_command.arg("--source-quietly");
-    run_command.arg("-o");
-    run_command.arg("run");
-    run_command.arg("-o");
-    run_command.arg("exit");
-    run_command.arg(format!(
-        "{BUILD_DIR}{SEPARATOR}{DEBUG_BUILD_SUBDIR}{SEPARATOR}app{EXE_EXTENSION}"
-    ));
-
-    if let Err(error) = run_command.status() {
-        println!("Can't run your app : {error}");
+                if let Err(error) = run_command.status() {
+                    println!("Can't run your app in debugger : {error}");
+                }
+            } else {
+                println!("Build failed");
+            }
+        }
+        Err(err_msg) => {
+            eprintln!("Build error : {err_msg}");
+        }
     }
 }
 
 fn release_run_command(config: &Config) {
-    release_build_command(config);
+    match build(config, true) {
+        Ok(successful) => {
+            if successful {
+                let mut run_command = Command::new(format!(
+                    "{BUILD_DIR}{SEPARATOR}{RELEASE_BUILD_SUBDIR}{SEPARATOR}app{EXE_EXTENSION}"
+                ));
 
-    let mut run_command = Command::new(format!(
-        "{BUILD_DIR}{SEPARATOR}{RELEASE_BUILD_SUBDIR}{SEPARATOR}app{EXE_EXTENSION}"
-    ));
-
-    if let Err(error) = run_command.status() {
-        println!("Can't run your app : {error}");
+                if let Err(error) = run_command.status() {
+                    println!("Can't run your app : {error}");
+                }
+            } else {
+                println!("Build failed");
+            }
+        }
+        Err(err_msg) => {
+            eprintln!("Build error : {err_msg}");
+        }
     }
 }
 
 fn debug_command(config: &Config) {
-    build_command(config);
+    match build(config, false) {
+        Ok(successful) => {
+            if successful {
+                let mut run_command = Command::new(&config.debugger);
+                run_command.arg(format!(
+                    "{BUILD_DIR}{SEPARATOR}{DEBUG_BUILD_SUBDIR}{SEPARATOR}app{EXE_EXTENSION}"
+                ));
 
-    let mut run_command = Command::new(&config.debugger);
-    run_command.arg(format!(
-        "{BUILD_DIR}{SEPARATOR}{DEBUG_BUILD_SUBDIR}{SEPARATOR}app{EXE_EXTENSION}"
-    ));
-
-    if let Err(error) = run_command.status() {
-        println!("Can't run your app : {error}");
+                if let Err(error) = run_command.status() {
+                    println!("Can't run your app in debugger : {error}");
+                }
+            } else {
+                println!("Build failed");
+            }
+        }
+        Err(err_msg) => {
+            eprintln!("Build error : {err_msg}");
+        }
     }
 }
 
@@ -516,6 +576,7 @@ fn show_config_command(config: &Config) {
     println!("    Flags             {:?}", config.flags);
     println!("    Debug flags       {:?}", config.debug_flags);
     println!("    Release flags     {:?}", config.release_flags);
+    println!("    Linter checks     {}", config.linter_checks);
 }
 
 fn clangd_config_command(config: &Config) {
