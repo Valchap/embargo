@@ -1,6 +1,6 @@
 [package]
 name = "embargo"
-version = "0.0.1"
+version = "0.1.0"
 edition = "2021"
 description = "A simple and fast opinionated build system for c/c++"
 license = "GPL-3.0"

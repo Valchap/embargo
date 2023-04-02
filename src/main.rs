@@ -576,6 +576,7 @@ fn show_config_command(config: &Config) {
     println!("    Flags             {:?}", config.flags);
     println!("    Debug flags       {:?}", config.debug_flags);
     println!("    Release flags     {:?}", config.release_flags);
+    println!("    Linker flags      {:?}", config.linker_flags);
     println!("    Linter checks     {}", config.linter_checks);
 }
 
