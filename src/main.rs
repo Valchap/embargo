@@ -627,7 +627,8 @@ fn main() {
             "init" => init_command(),
             "help" => help_command(),
 
-            _ => {
+            "build" | "release-build" | "run" | "release-run" | "debug" | "lint"
+            | "show-config" | "clangd-config" | "clean" => {
                 match read_configuration(".") {
                     Ok(config) => {
                         match first_arg.as_str() {
@@ -641,9 +642,7 @@ fn main() {
                             "show-config" => show_config_command(&config),
                             "clangd-config" => clangd_config_command(&config),
                             "clean" => clean_command(), // Doesn't need configuration, but for safety can only be used inside a project
-                            _ => eprintln!(
-                                "Unknown command, try `embargo help` for more informations"
-                            ),
+                            _ => unreachable!(),
                         }
                     }
                     Err(err_msg) => {
@@ -651,6 +650,8 @@ fn main() {
                     }
                 }
             }
+
+            _ => eprintln!("Unknown command, try `embargo help` for more informations"),
         }
     } else {
         eprintln!("Embargo takes a command as parameter, try `embargo help` for more informations");
