@@ -3,10 +3,12 @@ use std::{
     thread,
 };
 
-pub fn parallel_run<I, O>(data: Vec<I>, function: fn(I) -> O) -> Vec<O>
+pub fn parallel_run<T, U>(data: U, function: fn(U::Item) -> T) -> Vec<T>
 where
-    I: Send + 'static,
-    O: Send + 'static,
+    T: Send + 'static,
+    U: IntoIterator,
+    U::IntoIter: Send + 'static,
+    U::Item: 'static,
 {
     let iterator = Arc::new(Mutex::new(data.into_iter()));
 
@@ -18,17 +20,14 @@ where
         1
     };
 
-    let mut handles = Vec::new();
+    let mut handles = Vec::with_capacity(thread_count);
 
     for _ in 0..thread_count {
         let iterator_clone = iterator.clone();
         let out_clone = out.clone();
 
         handles.push(thread::spawn(move || loop {
-            let next = {
-                let mut iterator_mutex = iterator_clone.lock().unwrap();
-                iterator_mutex.next()
-            };
+            let next = iterator_clone.lock().unwrap().next();
 
             if let Some(value) = next {
                 let result = function(value);
