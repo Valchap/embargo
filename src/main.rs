@@ -9,6 +9,7 @@ use std::{
     process::Command,
 };
 
+use clap::{Parser, Subcommand};
 use parallel_runner::parallel_run;
 use toml::{map::Map, Table, Value};
 use walkdir::WalkDir;
@@ -604,56 +605,70 @@ fn clean_command() {
     }
 }
 
-fn help_command() {
-    println!("Usage: embargo [COMMAND]");
-    println!("Available commands :");
-    println!("    build            Build the app in debug mode");
-    println!("    release-build    Build the app in release mode");
-    println!("    run              Build the app in debug mode and run it");
-    println!("    release-run      Build the app in release mode and run it");
-    println!("    debug            Build the app in debug mode and open it with the debugger");
-    println!("    lint             Run the linter on your project to find common mistakes");
-    println!("    init             Create default files to start working on your project");
-    println!("    show-config      Show embargo configuration as defined in Embargo.toml file");
-    println!("    clangd-config    Generate compile_flags.txt based on your configuration for clangd settings");
-    println!("    clean            Remove the build directory");
-    println!("    help             Show this help message");
+#[derive(Parser)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Build the app with debug information
+    Build,
+
+    /// Build the app with release optimizations
+    ReleaseBuild,
+
+    /// Run the app (run is made inside a debugger to catch runtime errors)
+    Run,
+
+    /// Run the app with release optimizations
+    ReleaseRun,
+
+    /// Open the app inside the debugger
+    Debug,
+
+    /// Run the linter on your project to find common mistakes
+    Lint,
+
+    /// Creates a default project in the current directory
+    Init,
+
+    /// Show embargo configuration as defined after reading Embargo.toml
+    ShowConfig,
+
+    /// Generate the compile_flags.txt file for use with the clangd language server
+    ClangdConfig,
+
+    /// Remove the build directory
+    Clean,
 }
 
 fn main() {
-    if let Some(first_arg) = std::env::args().nth(1) {
-        match first_arg.as_str() {
-            // Commands usable outside project directory
-            "init" => init_command(),
-            "help" => help_command(),
+    let arguments = Cli::parse();
 
-            "build" | "release-build" | "run" | "release-run" | "debug" | "lint"
-            | "show-config" | "clangd-config" | "clean" => {
-                match read_configuration(".") {
-                    Ok(config) => {
-                        match first_arg.as_str() {
-                            // Commands for use inside a project
-                            "build" => build_command(&config),
-                            "release-build" => release_build_command(&config),
-                            "run" => run_command(&config),
-                            "release-run" => release_run_command(&config),
-                            "debug" => debug_command(&config),
-                            "lint" => lint_command(&config),
-                            "show-config" => show_config_command(&config),
-                            "clangd-config" => clangd_config_command(&config),
-                            "clean" => clean_command(), // Doesn't need configuration, but for safety can only be used inside a project
-                            _ => unreachable!(),
-                        }
-                    }
-                    Err(err_msg) => {
-                        eprintln!("{err_msg}");
-                    }
+    match arguments.command {
+        Commands::Init => init_command(),
+        _ => match read_configuration(".") {
+            Ok(config) => {
+                match arguments.command {
+                    // Commands for use inside a project
+                    Commands::Build => build_command(&config),
+                    Commands::ReleaseBuild => release_build_command(&config),
+                    Commands::Run => run_command(&config),
+                    Commands::ReleaseRun => release_run_command(&config),
+                    Commands::Debug => debug_command(&config),
+                    Commands::Lint => lint_command(&config),
+                    Commands::ShowConfig => show_config_command(&config),
+                    Commands::ClangdConfig => clangd_config_command(&config),
+                    Commands::Clean => clean_command(), // Doesn't need configuration, but for safety can only be used inside a project
+
+                    Commands::Init => init_command(), // Unreachable
                 }
             }
-
-            _ => eprintln!("Unknown command, try `embargo help` for more informations"),
-        }
-    } else {
-        eprintln!("Embargo takes a command as parameter, try `embargo help` for more informations");
+            Err(err_msg) => {
+                eprintln!("{err_msg}");
+            }
+        },
     }
 }

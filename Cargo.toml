@@ -10,5 +10,6 @@ categories = ["command-line-utilities", "development-tools::build-utils"]
 keywords = ["c", "c++", "build-tool"]
 
 [dependencies]
+clap = {version="4.2.1", features=["derive"]}
 toml = "0.7.3"
 walkdir = "2.3.3"
