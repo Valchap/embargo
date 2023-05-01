@@ -1,4 +1,5 @@
 #![warn(clippy::pedantic)]
+#![warn(clippy::nursery)]
 
 mod parallel_runner;
 
@@ -77,15 +78,12 @@ struct Config {
 }
 
 fn read_string_key(toml: &Map<String, Value>, key_name: &str) -> Result<Option<String>, String> {
-    if let Some(value) = toml.get(key_name) {
-        if let Some(slice) = value.as_str() {
-            Ok(Some(slice.to_string()))
-        } else {
-            Err(format!("{key_name} value must be a string"))
-        }
-    } else {
-        Ok(None)
-    }
+    toml.get(key_name).map_or(Ok(None), |value| {
+        value.as_str().map_or_else(
+            || Err(format!("{key_name} value must be a string")),
+            |slice| Ok(Some(slice.to_string())),
+        )
+    })
 }
 
 fn read_string_list_key(
@@ -140,25 +138,25 @@ fn read_configuration(config_path: &str) -> Result<Config, String> {
     match std::fs::read_to_string(format!("{config_path}{SEPARATOR}{CONFIG_FILE}")) {
         Ok(toml_str) => match toml_str.parse::<Table>() {
             Ok(toml) => {
-                let compiler =
-                    read_string_key(&toml, COMPILER_KEY)?.unwrap_or(DEFAULT_COMPILER.to_owned());
-                let debugger =
-                    read_string_key(&toml, DEBUGGER_KEY)?.unwrap_or(DEFAULT_DEBUGGER.to_owned());
-                let linter =
-                    read_string_key(&toml, LINTER_KEY)?.unwrap_or(DEFAULT_LINTER.to_owned());
+                let compiler = read_string_key(&toml, COMPILER_KEY)?
+                    .unwrap_or_else(|| DEFAULT_COMPILER.to_owned());
+                let debugger = read_string_key(&toml, DEBUGGER_KEY)?
+                    .unwrap_or_else(|| DEFAULT_DEBUGGER.to_owned());
+                let linter = read_string_key(&toml, LINTER_KEY)?
+                    .unwrap_or_else(|| DEFAULT_LINTER.to_owned());
 
                 let flags = read_string_list_key(&toml, FLAGS_KEY)?
-                    .unwrap_or(to_owned_string_vec(DEFAULT_FLAGS));
+                    .unwrap_or_else(|| to_owned_string_vec(DEFAULT_FLAGS));
                 let debug_flags = read_string_list_key(&toml, DEBUG_FLAGS_KEY)?
-                    .unwrap_or(to_owned_string_vec(DEFAULT_DEBUG_FLAGS));
+                    .unwrap_or_else(|| to_owned_string_vec(DEFAULT_DEBUG_FLAGS));
                 let release_flags = read_string_list_key(&toml, RELEASE_FLAGS_KEY)?
-                    .unwrap_or(to_owned_string_vec(DEFAULT_RELEASE_FLAGS));
+                    .unwrap_or_else(|| to_owned_string_vec(DEFAULT_RELEASE_FLAGS));
 
                 let linker_flags = read_string_list_key(&toml, LINKER_FLAGS_KEY)?
-                    .unwrap_or(to_owned_string_vec(DEFAULT_LINKER_FLAGS));
+                    .unwrap_or_else(|| to_owned_string_vec(DEFAULT_LINKER_FLAGS));
 
                 let linter_checks = read_string_key(&toml, LINTER_CHECKS_KEY)?
-                    .unwrap_or(DEFAULT_LINTER_CHECKS.to_owned());
+                    .unwrap_or_else(|| DEFAULT_LINTER_CHECKS.to_owned());
 
                 Ok(Config {
                     compiler,
@@ -172,12 +170,12 @@ fn read_configuration(config_path: &str) -> Result<Config, String> {
                 })
             }
 
-            Err(_toml_parse_error) => Err(format!(
-                "Can't parse {CONFIG_FILE} file ! Does it contain valid toml ?"
+            Err(toml_parse_error) => Err(format!(
+                "Can't parse {CONFIG_FILE} file ! Does it contain valid toml ? : {toml_parse_error}"
             )),
         },
-        Err(_toml_read_error) => Err(format!(
-            "Can't read {CONFIG_FILE} file ! Are you in a project folder ?"
+        Err(toml_read_error) => Err(format!(
+            "Can't read {CONFIG_FILE} file ! Are you in a project folder ? : {toml_read_error}"
         )),
     }
 }
@@ -606,6 +604,7 @@ fn clean_command() {
 }
 
 #[derive(Parser)]
+#[command(version, about)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

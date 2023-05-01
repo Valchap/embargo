@@ -14,11 +14,7 @@ where
 
     let out = Arc::new(Mutex::new(Vec::new()));
 
-    let thread_count = if let Ok(count) = thread::available_parallelism() {
-        count.get()
-    } else {
-        1
-    };
+    let thread_count = thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
 
     let mut handles = Vec::with_capacity(thread_count);
 
@@ -43,9 +39,5 @@ where
         t.join().unwrap();
     }
 
-    if let Ok(arc_content) = Arc::try_unwrap(out) {
-        arc_content.into_inner().unwrap()
-    } else {
-        unreachable!();
-    }
+    Arc::try_unwrap(out).map_or_else(|_| unreachable!(), |mutex| mutex.into_inner().unwrap())
 }

@@ -87,7 +87,7 @@ Embargo project configuration is read from the Embargo.toml file at the root of 
 Here is an example configuration with Embargo default settings
 
 ```toml
-compiler = "clang"
+compiler = "clang++"
 debugger = "lldb"
 linter = "clang-tidy"
 flags = ["-Wall", "-Wextra", "-pedantic"]
